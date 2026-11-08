@@ -1,0 +1,33 @@
+# Optional local-only AWS profile access for the API and worker.
+# Use a host AWS IAM Identity Center profile (aws sso login) or another
+# short-lived profile. Never put permanent AWS keys in this file or .env.
+services:
+  backend:
+    user: "${AWS_CONTAINER_UID:?Set AWS_CONTAINER_UID to the host uid}:${AWS_CONTAINER_GID:?Set AWS_CONTAINER_GID to the host gid}"
+    environment:
+      CLOUDSENTINEL_AWS_VALIDATION_MODE: real
+      AWS_PROFILE: "${AWS_PROFILE:?Set AWS_PROFILE to the local AWS profile name}"
+      AWS_CONFIG_FILE: /home/app/.aws/config
+      AWS_SHARED_CREDENTIALS_FILE: /home/app/.aws/credentials
+    volumes:
+      - type: bind
+        source: "${AWS_CONFIG_DIR:?Set AWS_CONFIG_DIR to the host AWS config directory}"
+        target: /home/app/.aws
+        read_only: true
+        bind:
+          create_host_path: false
+
+  worker:
+    user: "${AWS_CONTAINER_UID:?Set AWS_CONTAINER_UID to the host uid}:${AWS_CONTAINER_GID:?Set AWS_CONTAINER_GID to the host gid}"
+    environment:
+      CLOUDSENTINEL_AWS_VALIDATION_MODE: real
+      AWS_PROFILE: "${AWS_PROFILE:?Set AWS_PROFILE to the local AWS profile name}"
+      AWS_CONFIG_FILE: /home/app/.aws/config
+      AWS_SHARED_CREDENTIALS_FILE: /home/app/.aws/credentials
+    volumes:
+      - type: bind
+        source: "${AWS_CONFIG_DIR:?Set AWS_CONFIG_DIR to the host AWS config directory}"
+        target: /home/app/.aws
+        read_only: true
+        bind:
+          create_host_path: false

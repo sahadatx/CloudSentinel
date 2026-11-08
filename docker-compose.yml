@@ -1,0 +1,160 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: cloudsentinel
+      POSTGRES_USER: cloudsentinel
+      POSTGRES_PASSWORD: ${CLOUDSENTINEL_POSTGRES_PASSWORD:?Set CLOUDSENTINEL_POSTGRES_PASSWORD in your local .env file}
+    ports:
+      - "127.0.0.1:5433:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U cloudsentinel -d cloudsentinel"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  redis:
+    image: redis:7.4-alpine
+    command: ["redis-server", "--save", "", "--appendonly", "no"]
+    ports:
+      - "127.0.0.1:6380:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  mailpit:
+    image: axllent/mailpit:v1.31
+    ports:
+      - "127.0.0.1:8025:8025"
+
+  backend:
+    build:
+      context: .
+      dockerfile: infrastructure/docker/Dockerfile.dev
+    environment:
+      CLOUDSENTINEL_APP_ENV: development
+      CLOUDSENTINEL_API_HOST: 0.0.0.0
+      CLOUDSENTINEL_API_PORT: "8000"
+      CLOUDSENTINEL_DATABASE_URL: postgresql+psycopg://cloudsentinel:${CLOUDSENTINEL_POSTGRES_PASSWORD:?Set CLOUDSENTINEL_POSTGRES_PASSWORD in your local .env file}@postgres:5432/cloudsentinel
+      CLOUDSENTINEL_JWT_SIGNING_KEY: ${CLOUDSENTINEL_JWT_SIGNING_KEY:?Set CLOUDSENTINEL_JWT_SIGNING_KEY in your local .env file}
+      CLOUDSENTINEL_REDIS_URL: redis://redis:6379/0
+      CLOUDSENTINEL_CELERY_BROKER_URL: redis://redis:6379/0
+      CLOUDSENTINEL_CELERY_RESULT_BACKEND_URL: redis://redis:6379/1
+      CLOUDSENTINEL_REPORT_STORAGE_BUCKET: ${CLOUDSENTINEL_REPORT_STORAGE_BUCKET:-}
+      CLOUDSENTINEL_REPORT_STORAGE_REGION: ${CLOUDSENTINEL_REPORT_STORAGE_REGION:-}
+      CLOUDSENTINEL_REPORT_STORAGE_ENDPOINT_URL: ${CLOUDSENTINEL_REPORT_STORAGE_ENDPOINT_URL:-}
+      CLOUDSENTINEL_REPORT_STORAGE_ACCESS_KEY: ${CLOUDSENTINEL_REPORT_STORAGE_ACCESS_KEY:-}
+      CLOUDSENTINEL_REPORT_STORAGE_SECRET_KEY: ${CLOUDSENTINEL_REPORT_STORAGE_SECRET_KEY:-}
+      CLOUDSENTINEL_REPORT_RETENTION_DAYS: ${CLOUDSENTINEL_REPORT_RETENTION_DAYS:-90}
+      CLOUDSENTINEL_TASK_EXECUTION_MAX_ATTEMPTS: ${CLOUDSENTINEL_TASK_EXECUTION_MAX_ATTEMPTS:-3}
+      CLOUDSENTINEL_TASK_STALE_AFTER_MINUTES: ${CLOUDSENTINEL_TASK_STALE_AFTER_MINUTES:-360}
+      CLOUDSENTINEL_SMTP_HOST: ${CLOUDSENTINEL_SMTP_HOST:-mailpit}
+      CLOUDSENTINEL_SMTP_PORT: ${CLOUDSENTINEL_SMTP_PORT:-1025}
+      CLOUDSENTINEL_SMTP_USERNAME: ${CLOUDSENTINEL_SMTP_USERNAME:-}
+      CLOUDSENTINEL_SMTP_PASSWORD: ${CLOUDSENTINEL_SMTP_PASSWORD:-}
+      CLOUDSENTINEL_SMTP_FROM_EMAIL: ${CLOUDSENTINEL_SMTP_FROM_EMAIL:-cloudsentinel@localhost.test}
+      CLOUDSENTINEL_SMTP_STARTTLS: ${CLOUDSENTINEL_SMTP_STARTTLS:-false}
+      CLOUDSENTINEL_FRONTEND_BASE_URL: ${CLOUDSENTINEL_FRONTEND_BASE_URL:-http://localhost:5173}
+      CLOUDSENTINEL_LOG_LEVEL: INFO
+      CLOUDSENTINEL_LOG_FORMAT: json
+      CLOUDSENTINEL_AWS_VALIDATION_MODE: ${CLOUDSENTINEL_AWS_VALIDATION_MODE:-real}
+      CLOUDSENTINEL_AWS_MOCK_SCENARIO: ${CLOUDSENTINEL_AWS_MOCK_SCENARIO:-success}
+    command: ["python", "-m", "uvicorn", "app.main:app", "--app-dir", "backend", "--host", "0.0.0.0", "--port", "8000"]
+    ports:
+      - "127.0.0.1:8001:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      mailpit:
+        condition: service_started
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=2)"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
+  worker:
+    build:
+      context: .
+      dockerfile: infrastructure/docker/Dockerfile.dev
+    environment:
+      CLOUDSENTINEL_APP_ENV: development
+      CLOUDSENTINEL_DATABASE_URL: postgresql+psycopg://cloudsentinel:${CLOUDSENTINEL_POSTGRES_PASSWORD:?Set CLOUDSENTINEL_POSTGRES_PASSWORD in your local .env file}@postgres:5432/cloudsentinel
+      CLOUDSENTINEL_REDIS_URL: redis://redis:6379/0
+      CLOUDSENTINEL_CELERY_BROKER_URL: redis://redis:6379/0
+      CLOUDSENTINEL_CELERY_RESULT_BACKEND_URL: redis://redis:6379/1
+      CLOUDSENTINEL_REPORT_STORAGE_BUCKET: ${CLOUDSENTINEL_REPORT_STORAGE_BUCKET:-}
+      CLOUDSENTINEL_REPORT_STORAGE_REGION: ${CLOUDSENTINEL_REPORT_STORAGE_REGION:-}
+      CLOUDSENTINEL_REPORT_STORAGE_ENDPOINT_URL: ${CLOUDSENTINEL_REPORT_STORAGE_ENDPOINT_URL:-}
+      CLOUDSENTINEL_REPORT_STORAGE_ACCESS_KEY: ${CLOUDSENTINEL_REPORT_STORAGE_ACCESS_KEY:-}
+      CLOUDSENTINEL_REPORT_STORAGE_SECRET_KEY: ${CLOUDSENTINEL_REPORT_STORAGE_SECRET_KEY:-}
+      CLOUDSENTINEL_REPORT_RETENTION_DAYS: ${CLOUDSENTINEL_REPORT_RETENTION_DAYS:-90}
+      CLOUDSENTINEL_TASK_EXECUTION_MAX_ATTEMPTS: ${CLOUDSENTINEL_TASK_EXECUTION_MAX_ATTEMPTS:-3}
+      CLOUDSENTINEL_TASK_STALE_AFTER_MINUTES: ${CLOUDSENTINEL_TASK_STALE_AFTER_MINUTES:-360}
+      CLOUDSENTINEL_LOG_LEVEL: INFO
+      CLOUDSENTINEL_AWS_VALIDATION_MODE: ${CLOUDSENTINEL_AWS_VALIDATION_MODE:-real}
+      CLOUDSENTINEL_AWS_MOCK_SCENARIO: ${CLOUDSENTINEL_AWS_MOCK_SCENARIO:-success}
+      CLOUDSENTINEL_LOG_FORMAT: json
+    command: ["celery", "-A", "app.core.celery_app:celery_app", "worker", "--loglevel=INFO"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  outbox-relay:
+    build:
+      context: .
+      dockerfile: infrastructure/docker/Dockerfile.dev
+    environment:
+      CLOUDSENTINEL_APP_ENV: development
+      CLOUDSENTINEL_DATABASE_URL: postgresql+psycopg://cloudsentinel:${CLOUDSENTINEL_POSTGRES_PASSWORD:?Set CLOUDSENTINEL_POSTGRES_PASSWORD in your local .env file}@postgres:5432/cloudsentinel
+      CLOUDSENTINEL_REDIS_URL: redis://redis:6379/0
+      CLOUDSENTINEL_CELERY_BROKER_URL: redis://redis:6379/0
+      CLOUDSENTINEL_CELERY_RESULT_BACKEND_URL: redis://redis:6379/1
+      CLOUDSENTINEL_REPORT_STORAGE_BUCKET: ${CLOUDSENTINEL_REPORT_STORAGE_BUCKET:-}
+      CLOUDSENTINEL_REPORT_STORAGE_REGION: ${CLOUDSENTINEL_REPORT_STORAGE_REGION:-}
+      CLOUDSENTINEL_REPORT_STORAGE_ENDPOINT_URL: ${CLOUDSENTINEL_REPORT_STORAGE_ENDPOINT_URL:-}
+      CLOUDSENTINEL_REPORT_STORAGE_ACCESS_KEY: ${CLOUDSENTINEL_REPORT_STORAGE_ACCESS_KEY:-}
+      CLOUDSENTINEL_REPORT_STORAGE_SECRET_KEY: ${CLOUDSENTINEL_REPORT_STORAGE_SECRET_KEY:-}
+      CLOUDSENTINEL_REPORT_RETENTION_DAYS: ${CLOUDSENTINEL_REPORT_RETENTION_DAYS:-90}
+      CLOUDSENTINEL_TASK_EXECUTION_MAX_ATTEMPTS: ${CLOUDSENTINEL_TASK_EXECUTION_MAX_ATTEMPTS:-3}
+      CLOUDSENTINEL_TASK_STALE_AFTER_MINUTES: ${CLOUDSENTINEL_TASK_STALE_AFTER_MINUTES:-360}
+      CLOUDSENTINEL_LOG_LEVEL: INFO
+      CLOUDSENTINEL_LOG_FORMAT: json
+    command: ["python", "-m", "app.task_outbox"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  frontend:
+    build:
+      context: .
+      dockerfile: infrastructure/docker/Dockerfile.frontend.dev
+    environment:
+      VITE_API_PROXY_TARGET: http://backend:8000
+    ports:
+      - "127.0.0.1:5173:5173"
+    depends_on:
+      backend:
+        condition: service_healthy
+
+  cloudflared:
+    profiles: ["public-tunnel"]
+    image: cloudflare/cloudflared:latest
+    command: ["tunnel", "--no-autoupdate", "--url", "http://frontend:5173"]
+    restart: unless-stopped
+    depends_on:
+      frontend:
+        condition: service_started
+
+volumes:
+  postgres-data:

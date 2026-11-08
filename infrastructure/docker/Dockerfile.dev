@@ -1,0 +1,23 @@
+# syntax=docker/dockerfile:1.7
+FROM python:3.12-slim
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PYTHONPATH=/app/backend
+
+WORKDIR /app
+
+COPY pyproject.toml README.md ./
+COPY alembic.ini ./
+COPY backend ./backend
+COPY scanner-engine ./scanner-engine
+COPY policy-engine ./policy-engine
+
+RUN --mount=type=cache,target=/root/.cache/pip \
+    addgroup --system app \
+    && adduser --system --ingroup app app \
+    && python -m pip install -e ".[dev]"
+
+USER app
+
+EXPOSE 8000

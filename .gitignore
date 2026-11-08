@@ -1,0 +1,16 @@
+.coverage
+.mypy_cache/
+.pytest_cache/
+.ruff_cache/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.env
+.venv/
+venv/
+node_modules/
+.vite/
+*.tsbuildinfo
+build/
+dist/
+!.env.example
