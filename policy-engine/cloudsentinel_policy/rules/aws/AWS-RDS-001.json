@@ -1,0 +1,13 @@
+{
+  "id": "AWS-RDS-001",
+  "name": "RDS instance is publicly accessible",
+  "description": "The RDS instance is configured as publicly accessible.",
+  "version": "1.0.0",
+  "severity": "HIGH",
+  "category": "Database Security",
+  "resource_types": ["rds_instance"],
+  "condition": {"path": "attributes.publicly_accessible", "op": "equals", "value": true},
+  "remediation": "Disable public accessibility and restrict database access to approved private networks.",
+  "risk": {"exploitability": 80, "exposure": 90, "asset_criticality": 75, "business_impact": 85, "compliance_impact": 60},
+  "compliance_controls": []
+}

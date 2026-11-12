@@ -1,0 +1,13 @@
+{
+  "id": "AWS-S3-004",
+  "name": "S3 server access logging is disabled",
+  "description": "The bucket does not report server access logging configured.",
+  "version": "1.0.0",
+  "severity": "MEDIUM",
+  "category": "Logging & Monitoring",
+  "resource_types": ["s3_bucket"],
+  "condition": {"path": "attributes.logging_enabled", "op": "equals", "value": false},
+  "remediation": "Configure an approved destination for S3 server access logs.",
+  "risk": {"exploitability": 35, "exposure": 30, "asset_criticality": 60, "business_impact": 65, "compliance_impact": 70},
+  "compliance_controls": []
+}

@@ -1,0 +1,13 @@
+{
+  "id": "AWS-CLOUDTRAIL-001",
+  "name": "CloudTrail trail is not logging",
+  "description": "The configured CloudTrail trail reports logging disabled.",
+  "version": "1.0.0",
+  "severity": "HIGH",
+  "category": "Logging & Monitoring",
+  "resource_types": ["cloudtrail"],
+  "condition": {"path": "attributes.is_logging", "op": "equals", "value": false},
+  "remediation": "Enable logging for the trail and verify delivery to its configured destination.",
+  "risk": {"exploitability": 50, "exposure": 40, "asset_criticality": 70, "business_impact": 75, "compliance_impact": 90},
+  "compliance_controls": []
+}

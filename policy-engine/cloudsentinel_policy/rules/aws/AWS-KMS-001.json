@@ -1,0 +1,13 @@
+{
+  "id": "AWS-KMS-001",
+  "name": "Customer managed KMS key rotation is disabled",
+  "description": "The symmetric customer managed KMS key reports automatic rotation disabled.",
+  "version": "1.0.0",
+  "severity": "MEDIUM",
+  "category": "Encryption Security",
+  "resource_types": ["kms_key"],
+  "condition": {"path": "attributes.key_rotation_enabled", "op": "equals", "value": false},
+  "remediation": "Enable automatic key rotation when compatible with the organization's key lifecycle.",
+  "risk": {"exploitability": 30, "exposure": 20, "asset_criticality": 70, "business_impact": 65, "compliance_impact": 60},
+  "compliance_controls": []
+}

@@ -1,0 +1,22 @@
+{
+  "id": "AWS-S3-001",
+  "name": "S3 bucket allows public access",
+  "description": "The bucket has a public policy or ACL, or one or more public access block controls are disabled.",
+  "version": "1.0.0",
+  "severity": "CRITICAL",
+  "category": "Storage Security",
+  "resource_types": ["s3_bucket"],
+  "condition": {
+    "any": [
+      {"path": "attributes.bucket_policy_public", "op": "equals", "value": true},
+      {"path": "attributes.public_acl", "op": "equals", "value": true},
+      {"path": "attributes.public_access_block.block_public_acls", "op": "equals", "value": false},
+      {"path": "attributes.public_access_block.ignore_public_acls", "op": "equals", "value": false},
+      {"path": "attributes.public_access_block.block_public_policy", "op": "equals", "value": false},
+      {"path": "attributes.public_access_block.restrict_public_buckets", "op": "equals", "value": false}
+    ]
+  },
+  "remediation": "Enable all S3 Block Public Access controls and remove unintended public policies or ACL grants.",
+  "risk": {"exploitability": 90, "exposure": 100, "asset_criticality": 75, "business_impact": 90, "compliance_impact": 80},
+  "compliance_controls": []
+}

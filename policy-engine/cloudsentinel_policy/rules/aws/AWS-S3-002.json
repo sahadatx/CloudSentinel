@@ -1,0 +1,13 @@
+{
+  "id": "AWS-S3-002",
+  "name": "S3 bucket default encryption is disabled",
+  "description": "The bucket has no configured default server-side encryption rule.",
+  "version": "1.0.0",
+  "severity": "HIGH",
+  "category": "Encryption Security",
+  "resource_types": ["s3_bucket"],
+  "condition": {"path": "attributes.encryption_enabled", "op": "equals", "value": false},
+  "remediation": "Configure default server-side encryption for new objects.",
+  "risk": {"exploitability": 45, "exposure": 55, "asset_criticality": 75, "business_impact": 80, "compliance_impact": 75},
+  "compliance_controls": []
+}

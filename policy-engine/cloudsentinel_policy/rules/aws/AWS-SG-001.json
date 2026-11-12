@@ -1,0 +1,12 @@
+{
+  "id": "AWS-SG-001",
+  "name": "SSH exposed to the public internet",
+  "description": "The security group allows inbound SSH from the unrestricted IPv4 range.",
+  "version": "1.0.0",
+  "severity": "CRITICAL",
+  "category": "Network Security",
+  "resource_types": ["security_group"],
+  "condition": {"path": "attributes.IpPermissions", "op": "contains_port_source", "value": {"port": 22, "source": "0.0.0.0/0"}},
+  "remediation": "Restrict inbound SSH to approved administrative networks.",
+  "risk": {"exploitability": 95, "exposure": 100, "asset_criticality": 60, "business_impact": 80, "compliance_impact": 70}
+}

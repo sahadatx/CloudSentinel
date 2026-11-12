@@ -1,0 +1,13 @@
+{
+  "id": "AWS-RDS-002",
+  "name": "RDS storage is not encrypted",
+  "description": "The RDS instance does not report storage encryption enabled.",
+  "version": "1.0.0",
+  "severity": "HIGH",
+  "category": "Encryption Security",
+  "resource_types": ["rds_instance"],
+  "condition": {"path": "attributes.storage_encrypted", "op": "equals", "value": false},
+  "remediation": "Migrate the database to an encrypted RDS instance using an approved change process.",
+  "risk": {"exploitability": 35, "exposure": 30, "asset_criticality": 75, "business_impact": 75, "compliance_impact": 75},
+  "compliance_controls": []
+}

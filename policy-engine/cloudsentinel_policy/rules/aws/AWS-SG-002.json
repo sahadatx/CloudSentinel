@@ -1,0 +1,18 @@
+{
+  "id": "AWS-SG-002",
+  "name": "RDP exposed to the public internet",
+  "description": "The security group allows inbound Remote Desktop from an unrestricted IPv4 or IPv6 source.",
+  "version": "1.0.0",
+  "severity": "CRITICAL",
+  "category": "Network Security",
+  "resource_types": ["security_group"],
+  "condition": {
+    "any": [
+      {"path": "attributes.IpPermissions", "op": "contains_port_source", "value": {"port": 3389, "source": "0.0.0.0/0"}},
+      {"path": "attributes.IpPermissions", "op": "contains_port_source", "value": {"port": 3389, "source": "::/0"}}
+    ]
+  },
+  "remediation": "Restrict inbound RDP to approved administrative networks.",
+  "risk": {"exploitability": 95, "exposure": 100, "asset_criticality": 60, "business_impact": 85, "compliance_impact": 70},
+  "compliance_controls": []
+}
