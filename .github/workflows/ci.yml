@@ -1,0 +1,239 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  quality:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install project and development tools
+        run: python -m pip install -e '.[dev,security]'
+
+      - name: Ruff
+        run: python -m ruff check .
+
+      - name: MyPy
+        run: python -m mypy
+
+      - name: Pytest
+        run: python -m pytest --cov=app --cov-report=xml --cov-report=term-missing --cov-fail-under=90
+
+      - name: Bandit
+        run: python -m bandit -r backend/app backend/migrations scanner-engine policy-engine
+
+      - name: Dependency audit
+        run: python -m pip_audit --strict .
+
+      - name: Semgrep
+        run: semgrep scan --error --config .semgrep.yml backend scanner-engine policy-engine reporting-engine
+
+  frontend:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend/cloudsentinel-ui
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: frontend/cloudsentinel-ui/package-lock.json
+
+      - name: Install frontend dependencies
+        run: npm ci --no-audit --no-fund
+
+      - name: Typecheck and build frontend
+        run: npm run build
+
+      - name: Lint frontend
+        run: npm run lint
+
+  browser-smoke:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend/cloudsentinel-ui
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: frontend/cloudsentinel-ui/package-lock.json
+
+      - name: Install frontend dependencies
+        run: npm ci --no-audit --no-fund
+
+      - name: Build frontend
+        run: npm run build
+
+      - name: Install Chromium
+        run: npx playwright install --with-deps chromium
+
+      - name: Run browser smoke checks
+        run: npm run e2e
+        env:
+          CI: "true"
+
+      - name: Save Playwright report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: frontend/cloudsentinel-ui/playwright-report/
+          retention-days: 14
+
+  backend-integration:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: cloudsentinel
+          POSTGRES_PASSWORD: cloudsentinel-ci
+          POSTGRES_DB: cloudsentinel
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U cloudsentinel -d cloudsentinel"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
+      redis:
+        image: redis:7.4-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      CLOUDSENTINEL_APP_ENV: test
+      CLOUDSENTINEL_DATABASE_URL: postgresql+psycopg://cloudsentinel:cloudsentinel-ci@127.0.0.1:5432/cloudsentinel
+      CLOUDSENTINEL_REDIS_URL: redis://127.0.0.1:6379/0
+      CLOUDSENTINEL_JWT_SIGNING_KEY: ci-only-test-signing-key-which-is-not-a-secret
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install project
+        run: python -m pip install -e .
+
+      - name: Apply all migrations to PostgreSQL
+        run: python -m alembic upgrade head
+
+      - name: Start API and verify PostgreSQL and Redis readiness
+        run: |
+          python -m uvicorn app.main:app --host 127.0.0.1 --port 8000 &
+          for attempt in $(seq 1 30); do
+            if curl --fail --silent http://127.0.0.1:8000/ready; then
+              exit 0
+            fi
+            sleep 2
+          done
+          exit 1
+
+  infrastructure-validation:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Set up Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "1.10.5"
+
+      - name: Format Terraform
+        run: terraform fmt -check -recursive infrastructure/terraform
+
+      - name: Validate AWS production foundation
+        working-directory: infrastructure/terraform/aws
+        run: |
+          terraform init -backend=false -input=false
+          terraform validate
+
+      - name: Validate state bucket foundation
+        working-directory: infrastructure/terraform/aws-state
+        run: |
+          terraform init -backend=false -input=false
+          terraform validate
+
+      - name: Install kubectl
+        uses: azure/setup-kubectl@v4
+        with:
+          version: v1.35.0
+
+      - name: Render Kubernetes base and production overlay
+        run: |
+          kubectl kustomize infrastructure/kubernetes/base >/dev/null
+          kubectl kustomize infrastructure/kubernetes/overlays/production >/dev/null
+
+  infrastructure-security:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Scan IaC, dependencies, and repository secrets with Trivy
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          scan-type: fs
+          scan-ref: .
+          trivy-config: .trivy.yaml
+          exit-code: "1"
+          severity: HIGH,CRITICAL
+
+      - name: Build production backend image
+        run: docker build -f infrastructure/docker/Dockerfile.production -t cloudsentinel/backend:ci .
+
+      - name: Scan production backend image
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          scan-type: image
+          image-ref: cloudsentinel/backend:ci
+          scanners: vuln,secret
+          ignore-unfixed: true
+          exit-code: "1"
+          severity: HIGH,CRITICAL
+
+      - name: Build production frontend image
+        run: docker build -f infrastructure/docker/frontend/Dockerfile.production -t cloudsentinel/frontend:ci .
+
+      - name: Scan production frontend image
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          scan-type: image
+          image-ref: cloudsentinel/frontend:ci
+          scanners: vuln,secret
+          ignore-unfixed: true
+          exit-code: "1"
+          severity: HIGH,CRITICAL

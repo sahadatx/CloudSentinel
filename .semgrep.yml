@@ -1,0 +1,13 @@
+rules:
+  - id: cloudsentinel-python-no-eval
+    message: Dynamic evaluation is not allowed in application code.
+    severity: ERROR
+    languages: [python]
+    pattern-either:
+      - pattern: eval(...)
+      - pattern: exec(...)
+  - id: cloudsentinel-python-unsafe-pickle
+    message: Do not deserialize untrusted data with pickle.
+    severity: ERROR
+    languages: [python]
+    pattern: pickle.loads(...)

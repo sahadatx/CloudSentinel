@@ -1,0 +1,19 @@
+scan:
+  severity:
+    - HIGH
+    - CRITICAL
+  scanners:
+    - vuln
+    - misconfig
+    - secret
+  skip-dirs:
+    - frontend/cloudsentinel-ui/node_modules
+    - frontend/cloudsentinel-ui/dist
+misconfiguration:
+  scanners:
+    - azure-arm
+    - cloudformation
+    - dockerfile
+    - helm
+    - kubernetes
+    - terraform

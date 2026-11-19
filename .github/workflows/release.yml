@@ -1,0 +1,263 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: read
+  id-token: write
+  attestations: write
+  packages: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    outputs:
+      backend-image: ${{ steps.refs.outputs.backend-image }}
+      frontend-image: ${{ steps.refs.outputs.frontend-image }}
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Configure short-lived AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_RELEASE_BUILD_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+
+      - name: Sign in to ECR
+        id: ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build and push backend image
+        id: backend
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: infrastructure/docker/Dockerfile.production
+          push: true
+          tags: ${{ steps.ecr.outputs.registry }}/${{ vars.ECR_BACKEND_REPOSITORY }}:${{ github.ref_name }}
+          cache-from: type=gha,scope=backend
+          cache-to: type=gha,scope=backend,mode=max
+
+      - name: Build and push frontend image
+        id: frontend
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: infrastructure/docker/frontend/Dockerfile.production
+          push: true
+          tags: ${{ steps.ecr.outputs.registry }}/${{ vars.ECR_FRONTEND_REPOSITORY }}:${{ github.ref_name }}
+          cache-from: type=gha,scope=frontend
+          cache-to: type=gha,scope=frontend,mode=max
+
+      - name: Build and push customer scanner image
+        id: scanner
+        uses: docker/build-push-action@v6
+        with:
+          context: scanner-sandbox
+          file: scanner-sandbox/Dockerfile
+          push: true
+          tags: ${{ steps.ecr.outputs.registry }}/${{ vars.ECR_CUSTOMER_SCANNER_REPOSITORY }}:${{ github.ref_name }}
+          cache-from: type=gha,scope=customer-scanner
+          cache-to: type=gha,scope=customer-scanner,mode=max
+
+      - name: Scan backend release image
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          image-ref: ${{ steps.ecr.outputs.registry }}/${{ vars.ECR_BACKEND_REPOSITORY }}@${{ steps.backend.outputs.digest }}
+          scanners: vuln,secret
+          ignore-unfixed: true
+          exit-code: "1"
+          severity: HIGH,CRITICAL
+
+      - name: Scan frontend release image
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          image-ref: ${{ steps.ecr.outputs.registry }}/${{ vars.ECR_FRONTEND_REPOSITORY }}@${{ steps.frontend.outputs.digest }}
+          scanners: vuln,secret
+          ignore-unfixed: true
+          exit-code: "1"
+          severity: HIGH,CRITICAL
+
+      - name: Scan customer scanner release image
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          image-ref: ${{ steps.ecr.outputs.registry }}/${{ vars.ECR_CUSTOMER_SCANNER_REPOSITORY }}@${{ steps.scanner.outputs.digest }}
+          scanners: vuln,secret
+          ignore-unfixed: true
+          exit-code: "1"
+          severity: HIGH,CRITICAL
+
+      - name: Generate backend CycloneDX SBOM
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          scan-type: image
+          image-ref: ${{ steps.ecr.outputs.registry }}/${{ vars.ECR_BACKEND_REPOSITORY }}@${{ steps.backend.outputs.digest }}
+          format: cyclonedx
+          output: backend-sbom.cdx.json
+          exit-code: "0"
+
+      - name: Generate frontend CycloneDX SBOM
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          scan-type: image
+          image-ref: ${{ steps.ecr.outputs.registry }}/${{ vars.ECR_FRONTEND_REPOSITORY }}@${{ steps.frontend.outputs.digest }}
+          format: cyclonedx
+          output: frontend-sbom.cdx.json
+          exit-code: "0"
+
+      - name: Generate customer scanner CycloneDX SBOM
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          scan-type: image
+          image-ref: ${{ steps.ecr.outputs.registry }}/${{ vars.ECR_CUSTOMER_SCANNER_REPOSITORY }}@${{ steps.scanner.outputs.digest }}
+          format: cyclonedx
+          output: customer-scanner-sbom.cdx.json
+          exit-code: "0"
+
+      - name: Install cosign
+        uses: sigstore/cosign-installer@v3
+
+      - name: Sign immutable image digests
+        env:
+          REGISTRY: ${{ steps.ecr.outputs.registry }}
+          BACKEND_REPOSITORY: ${{ vars.ECR_BACKEND_REPOSITORY }}
+          BACKEND_DIGEST: ${{ steps.backend.outputs.digest }}
+          FRONTEND_REPOSITORY: ${{ vars.ECR_FRONTEND_REPOSITORY }}
+          FRONTEND_DIGEST: ${{ steps.frontend.outputs.digest }}
+          BACKEND_IMAGE: ${{ steps.ecr.outputs.registry }}/${{ vars.ECR_BACKEND_REPOSITORY }}@${{ steps.backend.outputs.digest }}
+          FRONTEND_IMAGE: ${{ steps.ecr.outputs.registry }}/${{ vars.ECR_FRONTEND_REPOSITORY }}@${{ steps.frontend.outputs.digest }}
+          SCANNER_REPOSITORY: ${{ vars.ECR_CUSTOMER_SCANNER_REPOSITORY }}
+          SCANNER_DIGEST: ${{ steps.scanner.outputs.digest }}
+          SCANNER_IMAGE: ${{ steps.ecr.outputs.registry }}/${{ vars.ECR_CUSTOMER_SCANNER_REPOSITORY }}@${{ steps.scanner.outputs.digest }}
+        run: |
+          cosign sign --yes "${REGISTRY}/${BACKEND_REPOSITORY}@${BACKEND_DIGEST}"
+          cosign sign --yes "${REGISTRY}/${FRONTEND_REPOSITORY}@${FRONTEND_DIGEST}"
+          cosign attest --yes --type cyclonedx --predicate backend-sbom.cdx.json "${BACKEND_IMAGE}"
+          cosign attest --yes --type cyclonedx --predicate frontend-sbom.cdx.json "${FRONTEND_IMAGE}"
+          cosign sign --yes "${REGISTRY}/${SCANNER_REPOSITORY}@${SCANNER_DIGEST}"
+          cosign attest --yes --type cyclonedx --predicate customer-scanner-sbom.cdx.json "${SCANNER_IMAGE}"
+
+      - name: Attest backend build provenance
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-name: ${{ steps.ecr.outputs.registry }}/${{ vars.ECR_BACKEND_REPOSITORY }}
+          subject-digest: ${{ steps.backend.outputs.digest }}
+          push-to-registry: true
+
+      - name: Attest frontend build provenance
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-name: ${{ steps.ecr.outputs.registry }}/${{ vars.ECR_FRONTEND_REPOSITORY }}
+          subject-digest: ${{ steps.frontend.outputs.digest }}
+          push-to-registry: true
+
+      - name: Attest customer scanner build provenance
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-name: ${{ steps.ecr.outputs.registry }}/${{ vars.ECR_CUSTOMER_SCANNER_REPOSITORY }}
+          subject-digest: ${{ steps.scanner.outputs.digest }}
+          push-to-registry: true
+
+      - name: Sign in to recovery Region ECR
+        if: ${{ vars.DR_AWS_REGION != '' && vars.DR_ECR_REGISTRY != '' }}
+        env:
+          DR_AWS_REGION: ${{ vars.DR_AWS_REGION }}
+          DR_ECR_REGISTRY: ${{ vars.DR_ECR_REGISTRY }}
+        run: |
+          aws ecr get-login-password --region "${DR_AWS_REGION}" \
+            | docker login --username AWS --password-stdin "${DR_ECR_REGISTRY}"
+
+      - name: Mirror signed release images to recovery Region
+        if: ${{ vars.DR_AWS_REGION != '' && vars.DR_ECR_REGISTRY != '' }}
+        env:
+          DR_AWS_REGION: ${{ vars.DR_AWS_REGION }}
+          DR_ECR_REGISTRY: ${{ vars.DR_ECR_REGISTRY }}
+          SOURCE_REGISTRY: ${{ steps.ecr.outputs.registry }}
+          BACKEND_REPOSITORY: ${{ vars.ECR_BACKEND_REPOSITORY }}
+          FRONTEND_REPOSITORY: ${{ vars.ECR_FRONTEND_REPOSITORY }}
+          SCANNER_REPOSITORY: ${{ vars.ECR_CUSTOMER_SCANNER_REPOSITORY }}
+          RELEASE_TAG: ${{ github.ref_name }}
+          BACKEND_SBOM: backend-sbom.cdx.json
+          FRONTEND_SBOM: frontend-sbom.cdx.json
+          SCANNER_SBOM: customer-scanner-sbom.cdx.json
+        run: |
+          for repository in "${BACKEND_REPOSITORY}" "${FRONTEND_REPOSITORY}" "${SCANNER_REPOSITORY}"; do
+            docker buildx imagetools create \
+              --tag "${DR_ECR_REGISTRY}/${repository}:${RELEASE_TAG}" \
+              "${SOURCE_REGISTRY}/${repository}:${RELEASE_TAG}"
+            digest="$(aws ecr describe-images --region "${DR_AWS_REGION}" \
+              --repository-name "${repository}" --image-ids "imageTag=${RELEASE_TAG}" \
+              --query 'imageDetails[0].imageDigest' --output text)"
+            image="${DR_ECR_REGISTRY}/${repository}@${digest}"
+            cosign sign --yes "${image}"
+            case "${repository}" in
+              "${BACKEND_REPOSITORY}") sbom="${BACKEND_SBOM}" ;;
+              "${FRONTEND_REPOSITORY}") sbom="${FRONTEND_SBOM}" ;;
+              *) sbom="${SCANNER_SBOM}" ;;
+            esac
+            cosign attest --yes --type cyclonedx --predicate "${sbom}" "${image}"
+          done
+
+      - name: Publish digest-pinned deployment references
+        id: refs
+        env:
+          REGISTRY: ${{ steps.ecr.outputs.registry }}
+          BACKEND_REPOSITORY: ${{ vars.ECR_BACKEND_REPOSITORY }}
+          BACKEND_DIGEST: ${{ steps.backend.outputs.digest }}
+          FRONTEND_REPOSITORY: ${{ vars.ECR_FRONTEND_REPOSITORY }}
+          FRONTEND_DIGEST: ${{ steps.frontend.outputs.digest }}
+        run: |
+          echo "backend-image=${REGISTRY}/${BACKEND_REPOSITORY}@${BACKEND_DIGEST}" >> "${GITHUB_OUTPUT}"
+          echo "frontend-image=${REGISTRY}/${FRONTEND_REPOSITORY}@${FRONTEND_DIGEST}" >> "${GITHUB_OUTPUT}"
+
+  deploy-production:
+    needs: build
+    runs-on: [self-hosted, linux, cloudsentinel-private-deploy]
+    environment: production
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Configure short-lived AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_RELEASE_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+
+      - name: Install cosign
+        uses: sigstore/cosign-installer@v3
+
+      - name: Verify signed image references
+        env:
+          BACKEND_IMAGE: ${{ needs.build.outputs.backend-image }}
+          FRONTEND_IMAGE: ${{ needs.build.outputs.frontend-image }}
+          RELEASE_IDENTITY: https://github.com/${{ github.repository }}/.github/workflows/release.yml@refs/tags/${{ github.ref_name }}
+        run: |
+          cosign verify --certificate-identity "${RELEASE_IDENTITY}" \
+            --certificate-oidc-issuer https://token.actions.githubusercontent.com "${BACKEND_IMAGE}"
+          cosign verify --certificate-identity "${RELEASE_IDENTITY}" \
+            --certificate-oidc-issuer https://token.actions.githubusercontent.com "${FRONTEND_IMAGE}"
+          cosign verify-attestation --type cyclonedx \
+            --certificate-identity "${RELEASE_IDENTITY}" \
+            --certificate-oidc-issuer https://token.actions.githubusercontent.com "${BACKEND_IMAGE}" >/dev/null
+          cosign verify-attestation --type cyclonedx \
+            --certificate-identity "${RELEASE_IDENTITY}" \
+            --certificate-oidc-issuer https://token.actions.githubusercontent.com "${FRONTEND_IMAGE}" >/dev/null
+
+      - name: Migrate, deploy, and roll back application images on failure
+        env:
+          AWS_REGION: ${{ vars.AWS_REGION }}
+          EKS_CLUSTER_NAME: ${{ vars.EKS_CLUSTER_NAME }}
+          BACKEND_IMAGE: ${{ needs.build.outputs.backend-image }}
+          FRONTEND_IMAGE: ${{ needs.build.outputs.frontend-image }}
+        run: scripts/aws/rollout-release.sh
