@@ -1,0 +1,36 @@
+aws_region              = "us-east-1"
+environment             = "production"
+name_prefix             = "cloudsentinel"
+vpc_id                  = "vpc-0123456789abcdef0"
+private_subnet_ids      = ["subnet-0123456789abcdef0", "subnet-0fedcba9876543210"]
+public_subnet_ids       = ["subnet-11111111111111111", "subnet-22222222222222222"]
+cluster_admin_role_arn  = "arn:aws:iam::123456789012:role/cloudsentinel-platform-admin"
+report_bucket_name      = "company-cloudsentinel-production-reports"
+domain_name             = "cloudsentinel.example.com"
+acm_certificate_arn     = "arn:aws:acm:us-east-1:123456789012:certificate/00000000-0000-0000-0000-000000000000"
+waf_web_acl_arn         = "arn:aws:wafv2:us-east-1:123456789012:regional/webacl/cloudsentinel/00000000-0000-0000-0000-000000000000"
+github_oidc_provider_arn = "arn:aws:iam::123456789012:oidc-provider/token.actions.githubusercontent.com"
+github_release_build_subject_pattern = "repo:company/CloudSentinel:ref:refs/tags/v*"
+github_release_deploy_subject        = "repo:company/CloudSentinel:environment:production"
+alarm_topic_arn         = "arn:aws:sns:us-east-1:123456789012:cloudsentinel-production-on-call"
+
+# Optional isolated customer assessment service. First publish this immutable
+# scanner tag to ECR, then enable it and copy the generated Terraform outputs
+# into the encrypted runtime secret.
+customer_scan_enabled      = false
+customer_scanner_image_tag = ""
+
+# Optional recovery Region; enabling this creates ongoing AWS charges. Supply a
+# distinct Region/bucket and a private recovery VPC spanning two Availability Zones.
+report_retention_days           = 90
+dr_enabled                   = false
+dr_aws_region                = ""
+dr_report_bucket_name        = ""
+dr_vpc_id                    = ""
+dr_private_subnet_ids        = []
+dr_database_backup_retention_days = 35
+dr_node_desired_size         = 2
+# dr_alarm_topic_arn          = "arn:aws:sns:us-west-2:123456789012:cloudsentinel-dr-on-call"
+
+# Supply redis_auth_token through an encrypted remote state and a secure CI variable.
+# Do not commit a real terraform.tfvars file or use local plaintext state.
